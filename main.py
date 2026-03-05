@@ -107,7 +107,7 @@ def _download_video(video_id: str) -> Path:
     out_path = tmp.name
 
     cmd = _base_cmd(video_id)
-    cmd[-1:] = ["-f", "18", "-o", out_path, cmd[-1]]
+    cmd[-1:] = ["-f", "18/best[ext=mp4]/best", "-o", out_path, cmd[-1]]
 
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     if r.returncode != 0 or not Path(out_path).exists():
@@ -276,5 +276,3 @@ async def list_formats(video_id: str):
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "cookies": bool(COOKIES_PATH)}
-
-
