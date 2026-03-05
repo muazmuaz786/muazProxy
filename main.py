@@ -17,7 +17,7 @@ STATIC_DIR = BASE_DIR / "static"
 STATIC_DIR.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-YOUTUBE_API_KEY    = "AIzaSyCkdN2Ru90k5DBzG5n7JjM7e6049UMtob4"
+YOUTUBE_API_KEY    = os.getenv("YOUTUBE_API_KEY", "")
 YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 _executor = ThreadPoolExecutor(max_workers=4)
 
@@ -77,7 +77,7 @@ def _get_meta(video_id: str) -> dict:
     cmd = _base_cmd(video_id)
     # insert before URL
     cmd[-1:] = ["--dump-json", "--skip-download", cmd[-1]]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
         raise HTTPException(500, "yt-dlp meta error: " + r.stderr[:300])
     data = _json.loads(r.stdout.strip())
@@ -199,4 +199,3 @@ async def parse_video(body: VideoRequest):
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "cookies": bool(COOKIES_PATH)}
-
