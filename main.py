@@ -107,8 +107,9 @@ def _get_meta(video_id: str) -> dict:
 
 def _resolve_stream(video_id: str) -> tuple[str, dict]:
     """Resolve direct media URL and required headers using yt-dlp JSON output."""
-    # Try a preferred mp4 <=720p, then fall back to "best" if unavailable.
+    # Try specific itags then fall back to generic best.
     format_candidates = [
+        "22/18/137+140/136+140/135+140",  # common mp4/720/360 or muxed combos
         "best[ext=mp4][height<=720]/best[height<=720]/best",
         "best",
     ]
