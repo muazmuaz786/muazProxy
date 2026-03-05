@@ -324,23 +324,14 @@
 
         nowPlayingTitle.textContent = data.title;
 
-        // Reset completely first
+        // Set src and show immediately — file is already downloaded server-side
         mainVideo.pause();
         mainVideo.removeAttribute('src');
+        mainVideo.src = `${API_BASE}/api/stream/${videoId}`;
         mainVideo.load();
 
-        // Wait until browser confirms it can play before showing
-        await new Promise((resolve, reject) => {
-          mainVideo.src = `${API_BASE}/api/stream/${videoId}`;
-          mainVideo.addEventListener('canplay', resolve, { once: true });
-          mainVideo.addEventListener('error', () => {
-            const code = mainVideo.error ? mainVideo.error.code : '?';
-            reject(new Error('Video error code: ' + code));
-          }, { once: true });
-          mainVideo.load();
-        });
-
         playerLoading.classList.remove('show');
+        placeholder.style.opacity = '0';
         mainVideo.classList.add('visible');
         controls.classList.add('visible');
         mainVideo.play().catch(() => {});
