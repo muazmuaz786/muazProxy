@@ -1,15 +1,17 @@
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.background import BackgroundTask
 from pydantic import BaseModel
 from pathlib import Path
 from typing import Optional, List
 from concurrent.futures import ThreadPoolExecutor
 import asyncio, httpx, json as _json, os, re, subprocess, tempfile, base64, logging
 
-app = FastAPI(title="YouTube Embedded Viewer")
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger(__name__)
+
+app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 BASE_DIR   = Path(__file__).resolve().parent
@@ -23,39 +25,19 @@ _executor = ThreadPoolExecutor(max_workers=4)
 
 
 # ── Cookies ────────────────────────────────────────────────────
-def _load_cookies() -> Optional[str]:
-    path = os.getenv("YTDLP_COOKIES_PATH")
-    if path and Path(path).exists():
-        return path
-    cookie_text = os.getenv("YTDLP_COOKIES")
-    if not cookie_text:
-        b64 = os.getenv("YTDLP_COOKIES_B64")
-        if b64:
-            try: cookie_text = base64.b64decode(b64).decode("utf-8")
-            except: return None
-    if not cookie_text:
-        return None
-    tmp = tempfile.NamedTemporaryFile(delete=False, prefix="yt_cookies_", suffix=".txt")
-    tmp.write(cookie_text.encode()); tmp.flush(); tmp.close()
-    return tmp.name
+def _setup_cookies() -> Optional[str]:
+    src = os.getenv("YTDLP_COOKIES_PATH")
+    if src and Path(src).exists():
+        try:
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".txt")
+            tmp.write(Path(src).read_bytes()); tmp.close()
+            log.info("Cookies copied to %s", tmp.name)
+            return tmp.name
+        except Exception as e:
+            log.warning("Cookie copy failed: %s", e)
+    return None
 
-
-# Copy cookies to writable temp location so yt-dlp can update them
-def _ensure_writable_cookies(path: Optional[str]) -> Optional[str]:
-    if not path:
-        return None
-    try:
-        tmp = tempfile.NamedTemporaryFile(delete=False, prefix='yt_cookies_rw_', suffix='.txt')
-        tmp.write(Path(path).read_bytes())
-        tmp.flush(); tmp.close()
-        logging.info('Copied cookies to writable path: %s', tmp.name)
-        return tmp.name
-    except Exception as e:
-        logging.warning('Could not copy cookies: %s', e)
-        return path
-
-COOKIES_PATH = _ensure_writable_cookies(_load_cookies())
-
+COOKIES = _setup_cookies()
 
 
 # ── Helpers ────────────────────────────────────────────────────
@@ -63,7 +45,6 @@ def extract_video_id(url: str) -> Optional[str]:
     for p in [
         r"(?:youtube\.com/watch\?(?:.*&)?v=)([A-Za-z0-9_-]{11})",
         r"(?:youtu\.be/)([A-Za-z0-9_-]{11})",
-        r"(?:youtube\.com/embed/)([A-Za-z0-9_-]{11})",
         r"(?:youtube\.com/shorts/)([A-Za-z0-9_-]{11})",
         r"^([A-Za-z0-9_-]{11})$",
     ]:
@@ -72,47 +53,47 @@ def extract_video_id(url: str) -> Optional[str]:
     return None
 
 
-def _base_cmd(video_id: str) -> list:
-    """Base yt-dlp command with all flags that help on server environments."""
-    cmd = [
-        "yt-dlp",
-        "--no-playlist",
-        "--no-warnings",
-        "--geo-bypass",
-        "--force-ipv4",
-        # web client works better with cookies than android
-        "--extractor-args", "youtube:player_client=web",
-    ]
-    if COOKIES_PATH:
-        cmd += ["--cookies", COOKIES_PATH]
-    cmd.append(f"https://www.youtube.com/watch?v={video_id}")
+def _ytdlp_base() -> list:
+    cmd = ["yt-dlp", "--no-playlist", "--geo-bypass", "--force-ipv4",
+           "--extractor-args", "youtube:player_client=ios"]
+    if COOKIES:
+        cmd += ["--cookies", COOKIES]
     return cmd
 
 
 def _get_meta(video_id: str) -> dict:
-    cmd = _base_cmd(video_id)
-    # insert before URL
-    cmd[-1:] = ["--dump-json", "--skip-download", cmd[-1]]
+    cmd = _ytdlp_base() + ["--dump-json", "--skip-download", "--no-warnings",
+                            f"https://www.youtube.com/watch?v={video_id}"]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
-        raise HTTPException(500, "yt-dlp meta error: " + (r.stderr or r.stdout)[:800])
-    data = _json.loads(r.stdout.strip())
-    return {"title": data.get("title", video_id), "thumbnail": data.get("thumbnail", "")}
+        raise HTTPException(500, f"yt-dlp meta error: {r.stderr[:400]}")
+    d = _json.loads(r.stdout.strip())
+    return {"title": d.get("title", video_id), "thumbnail": d.get("thumbnail", "")}
 
 
-def _download_video(video_id: str) -> Path:
-    """Download video to a temp file and return its path."""
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4', prefix=f'yt_{video_id}_')
-    tmp.close()
-    out_path = tmp.name
-
-    cmd = _base_cmd(video_id)
-    cmd[-1:] = ["-f", "18/best[ext=mp4]/best", "-o", out_path, cmd[-1]]
-
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    if r.returncode != 0 or not Path(out_path).exists():
-        raise HTTPException(500, "Download failed: " + r.stderr[:300])
-    return Path(out_path)
+def _download(video_id: str) -> Path:
+    out = tempfile.mktemp(suffix=".mp4", prefix=f"yt_{video_id}_")
+    cmd = _ytdlp_base() + [
+        "-f", "18/best[ext=mp4][height<=480]/best[ext=mp4]/best",
+        "--no-warnings",
+        "-o", out,
+        f"https://www.youtube.com/watch?v={video_id}",
+    ]
+    log.info("Downloading %s", video_id)
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    log.info("yt-dlp returncode=%s stderr=%s", r.returncode, r.stderr[:200])
+    
+    p = Path(out)
+    if not p.exists() or p.stat().st_size < 1000:
+        # try without format restriction
+        cmd2 = _ytdlp_base() + ["--no-warnings", "-o", out,
+                                  f"https://www.youtube.com/watch?v={video_id}"]
+        r2 = subprocess.run(cmd2, capture_output=True, text=True, timeout=180)
+        if not p.exists() or p.stat().st_size < 1000:
+            raise HTTPException(500, f"Download failed: {r.stderr[:300] or r2.stderr[:300]}")
+    
+    log.info("Downloaded %s → %s bytes", video_id, p.stat().st_size)
+    return p
 
 
 # ── Schemas ────────────────────────────────────────────────────
@@ -135,18 +116,18 @@ class SearchResponse(BaseModel):
 
 
 # ── Routes ─────────────────────────────────────────────────────
-@app.get("/", response_class=FileResponse)
+@app.get("/")
 async def serve_index():
     p = STATIC_DIR / "index.html"
-    if not p.exists(): raise HTTPException(404, "Frontend not found.")
+    if not p.exists(): raise HTTPException(404, "index.html not found")
     return FileResponse(p)
 
 @app.get("/api/thumbnail/{video_id}")
-async def proxy_thumbnail(video_id: str):
+async def thumbnail(video_id: str):
     async with httpx.AsyncClient() as c:
         r = await c.get(f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg", timeout=5)
-    if r.status_code != 200: raise HTTPException(404, "Thumbnail not found")
-    return Response(content=r.content, media_type="image/jpeg")
+    if r.status_code != 200: raise HTTPException(404)
+    return Response(r.content, media_type="image/jpeg")
 
 @app.get("/api/stream-info/{video_id}", response_model=StreamInfo)
 async def stream_info(video_id: str):
@@ -155,83 +136,33 @@ async def stream_info(video_id: str):
     return StreamInfo(video_id=video_id, **meta)
 
 @app.get("/api/stream/{video_id}")
-async def stream_video(video_id: str, request: Request):
-    """Download to temp file first, then serve with proper Range support."""
+async def stream(video_id: str):
+    """Download full video then serve as FileResponse (handles Range automatically)."""
     loop = asyncio.get_event_loop()
-    path = await loop.run_in_executor(_executor, _download_video, video_id)
-
-    file_size = path.stat().st_size
-    range_header = request.headers.get("range")
-
-    def cleanup():
-        try: path.unlink()
-        except: pass
-
-    if range_header:
-        # Parse range
-        start, end = range_header.replace("bytes=", "").split("-")
-        start = int(start)
-        end = int(end) if end else file_size - 1
-        chunk_size = end - start + 1
-
-        def ranged_gen():
-            with open(path, "rb") as f:
-                f.seek(start)
-                remaining = chunk_size
-                while remaining > 0:
-                    data = f.read(min(65536, remaining))
-                    if not data: break
-                    remaining -= len(data)
-                    yield data
-            cleanup()
-
-        return StreamingResponse(
-            ranged_gen(),
-            status_code=206,
-            media_type="video/mp4",
-            headers={
-                "Content-Range": f"bytes {start}-{end}/{file_size}",
-                "Accept-Ranges": "bytes",
-                "Content-Length": str(chunk_size),
-            }
-        )
-    else:
-        def full_gen():
-            with open(path, "rb") as f:
-                while True:
-                    chunk = f.read(65536)
-                    if not chunk: break
-                    yield chunk
-            cleanup()
-
-        return StreamingResponse(
-            full_gen(),
-            media_type="video/mp4",
-            headers={
-                "Content-Length": str(file_size),
-                "Accept-Ranges": "bytes",
-                "Cache-Control": "no-cache",
-            }
-        )
+    path = await loop.run_in_executor(_executor, _download, video_id)
+    
+    # FileResponse handles Range requests natively — no manual chunking needed
+    return FileResponse(
+        path,
+        media_type="video/mp4",
+        filename=f"{video_id}.mp4",
+        background=None,
+    )
 
 @app.get("/api/search", response_model=SearchResponse)
-async def search_videos(
-    q: str = Query(..., min_length=1),
-    kind: str = Query("video", pattern="^(video|short)$"),
-    page_token: Optional[str] = Query(None),
-):
+async def search(q: str = Query(...), kind: str = Query("video"), page_token: Optional[str] = None):
     if not YOUTUBE_API_KEY:
-        raise HTTPException(500, "YOUTUBE_API_KEY not set.")
+        raise HTTPException(500, "YOUTUBE_API_KEY not set")
     params = {
-        "part": "snippet", "q": f"{q} #Shorts" if kind == "short" else q,
-        "type": "video", "maxResults": 12,
+        "part": "snippet", "type": "video", "maxResults": 12,
+        "q": f"{q} #Shorts" if kind == "short" else q,
         "videoDuration": "short" if kind == "short" else "any",
         "key": YOUTUBE_API_KEY,
     }
     if page_token: params["pageToken"] = page_token
     async with httpx.AsyncClient() as c:
         r = await c.get(YOUTUBE_SEARCH_URL, params=params, timeout=8)
-    if r.status_code != 200: raise HTTPException(r.status_code, "YouTube API error.")
+    if r.status_code != 200: raise HTTPException(r.status_code, "YouTube API error")
     body = r.json()
     return SearchResponse(
         results=[SearchResult(video_id=i["id"]["videoId"],
@@ -242,37 +173,11 @@ async def search_videos(
     )
 
 @app.post("/api/parse")
-async def parse_video(body: VideoRequest):
+async def parse(body: VideoRequest):
     vid = extract_video_id(body.url)
-    if not vid: raise HTTPException(422, "Invalid YouTube URL or ID.")
+    if not vid: raise HTTPException(422, "Invalid YouTube URL or ID")
     return {"video_id": vid}
-
-
-@app.get("/api/debug/{video_id}")
-async def debug_ytdlp(video_id: str):
-    """Temporary debug endpoint — remove after fixing."""
-    import shutil
-    cmd = _base_cmd(video_id)
-    cmd[-1:] = ["--dump-json", "--skip-download", cmd[-1]]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-    return {
-        "returncode": r.returncode,
-        "stdout_snippet": r.stdout[:500],
-        "stderr_full": r.stderr,
-        "yt_dlp_path": shutil.which("yt-dlp"),
-        "cookies_path": COOKIES_PATH,
-        "cookies_exists": Path(COOKIES_PATH).exists() if COOKIES_PATH else False,
-        "cmd": cmd,
-    }
-
-
-@app.get("/api/formats/{video_id}")
-async def list_formats(video_id: str):
-    cmd = _base_cmd(video_id)
-    cmd[-1:] = ["--list-formats", cmd[-1]]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-    return Response(content=r.stdout + r.stderr, media_type="text/plain")
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "cookies": bool(COOKIES_PATH)}
+    return {"status": "ok", "cookies": bool(COOKIES), "api_key": bool(YOUTUBE_API_KEY)}
