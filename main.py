@@ -54,8 +54,7 @@ def extract_video_id(url: str) -> Optional[str]:
 
 
 def _ytdlp_base() -> list:
-    cmd = ["yt-dlp", "--no-playlist", "--geo-bypass", "--force-ipv4",
-           "--extractor-args", "youtube:player_client=ios"]
+    cmd = ["yt-dlp", "--no-playlist", "--geo-bypass", "--force-ipv4"]
     if COOKIES:
         cmd += ["--cookies", COOKIES]
     return cmd
