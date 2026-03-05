@@ -101,36 +101,28 @@ def _get_meta(video_id: str) -> dict:
 
 
 def _stream_video(video_id: str):
-    """
-    Stream directly from yt-dlp stdout — tries formats from most to least compatible.
-    '18' = 360p mp4 (always a single file, no merge needed) — most reliable on servers.
-    """
-    format_order = [
-        "18",                                          # 360p mp4 combined — most reliable
-        "best[ext=mp4][height<=480]",
-        "best[ext=mp4][height<=720]",
-        "best[ext=mp4]",
-        "best",
-    ]
+    """Stream directly from yt-dlp stdout using format 18 (360p mp4, always available)."""
+    cmd = _base_cmd(video_id)
+    cmd[-1:] = ["-f", "18", "-o", "-", cmd[-1]]
+    
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
 
-    for fmt in format_order:
-        cmd = _base_cmd(video_id)
-        cmd[-1:] = ["-f", fmt, "-o", "-", cmd[-1]]
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        # peek first 8KB — if we get data, format works
-        first = proc.stdout.read(8192)
-        if first and proc.poll() is None:
-            def gen(proc=proc, first=first):
-                yield first
-                while True:
-                    chunk = proc.stdout.read(65536)
-                    if not chunk: break
-                    yield chunk
-                proc.stdout.close(); proc.wait()
-            return gen()
-        proc.stdout.close(); proc.stderr.close(); proc.wait()
+    def gen():
+        try:
+            while True:
+                chunk = proc.stdout.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            proc.stdout.close()
+            proc.wait()
 
-    raise HTTPException(500, "No playable format found for this video.")
+    return gen()
 
 
 # ── Schemas ────────────────────────────────────────────────────
