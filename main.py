@@ -17,7 +17,7 @@ STATIC_DIR = BASE_DIR / "static"
 STATIC_DIR.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-YOUTUBE_API_KEY    = "AIzaSyCkdN2Ru90k5DBzG5n7JjM7e6049UMtob4"
+YOUTUBE_API_KEY    = os.getenv("YOUTUBE_API_KEY", "")
 YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 _executor = ThreadPoolExecutor(max_workers=4)
 
@@ -100,29 +100,19 @@ def _get_meta(video_id: str) -> dict:
     return {"title": data.get("title", video_id), "thumbnail": data.get("thumbnail", "")}
 
 
-def _stream_video(video_id: str):
-    """Stream directly from yt-dlp stdout using format 18 (360p mp4, always available)."""
+def _download_video(video_id: str) -> Path:
+    """Download video to a temp file and return its path."""
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4', prefix=f'yt_{video_id}_')
+    tmp.close()
+    out_path = tmp.name
+
     cmd = _base_cmd(video_id)
-    cmd[-1:] = ["-f", "18", "-o", "-", cmd[-1]]
-    
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-    )
+    cmd[-1:] = ["-f", "18", "-o", out_path, cmd[-1]]
 
-    def gen():
-        try:
-            while True:
-                chunk = proc.stdout.read(65536)
-                if not chunk:
-                    break
-                yield chunk
-        finally:
-            proc.stdout.close()
-            proc.wait()
-
-    return gen()
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    if r.returncode != 0 or not Path(out_path).exists():
+        raise HTTPException(500, "Download failed: " + r.stderr[:300])
+    return Path(out_path)
 
 
 # ── Schemas ────────────────────────────────────────────────────
@@ -165,19 +155,64 @@ async def stream_info(video_id: str):
     return StreamInfo(video_id=video_id, **meta)
 
 @app.get("/api/stream/{video_id}")
-async def stream_video(video_id: str):
+async def stream_video(video_id: str, request: Request):
+    """Download to temp file first, then serve with proper Range support."""
     loop = asyncio.get_event_loop()
-    gen  = await loop.run_in_executor(_executor, _stream_video, video_id)
-    return StreamingResponse(
-        gen,
-        media_type="video/mp4",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-            "Content-Type": "video/mp4",
-            "Accept-Ranges": "bytes",
-        }
-    )
+    path = await loop.run_in_executor(_executor, _download_video, video_id)
+
+    file_size = path.stat().st_size
+    range_header = request.headers.get("range")
+
+    def cleanup():
+        try: path.unlink()
+        except: pass
+
+    if range_header:
+        # Parse range
+        start, end = range_header.replace("bytes=", "").split("-")
+        start = int(start)
+        end = int(end) if end else file_size - 1
+        chunk_size = end - start + 1
+
+        def ranged_gen():
+            with open(path, "rb") as f:
+                f.seek(start)
+                remaining = chunk_size
+                while remaining > 0:
+                    data = f.read(min(65536, remaining))
+                    if not data: break
+                    remaining -= len(data)
+                    yield data
+            cleanup()
+
+        return StreamingResponse(
+            ranged_gen(),
+            status_code=206,
+            media_type="video/mp4",
+            headers={
+                "Content-Range": f"bytes {start}-{end}/{file_size}",
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(chunk_size),
+            }
+        )
+    else:
+        def full_gen():
+            with open(path, "rb") as f:
+                while True:
+                    chunk = f.read(65536)
+                    if not chunk: break
+                    yield chunk
+            cleanup()
+
+        return StreamingResponse(
+            full_gen(),
+            media_type="video/mp4",
+            headers={
+                "Content-Length": str(file_size),
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "no-cache",
+            }
+        )
 
 @app.get("/api/search", response_model=SearchResponse)
 async def search_videos(
@@ -241,4 +276,3 @@ async def list_formats(video_id: str):
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "cookies": bool(COOKIES_PATH)}
-
