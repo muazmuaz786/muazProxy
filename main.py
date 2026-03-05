@@ -1,4 +1,4 @@
-﻿from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +13,7 @@ import json as _json
 import os
 import re
 import subprocess
+import tempfile
 
 app = FastAPI(title="YouTube Embedded Viewer")
 
@@ -32,6 +33,15 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "AIzaSyCkdN2Ru90k5DBzG5n7JjM7e604
 YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 _executor = ThreadPoolExecutor(max_workers=4)
 
+# Optional: allow passing cookies via env to bypass YouTube bot checks.
+COOKIES_PATH = None
+if os.getenv("YTDLP_COOKIES"):
+    # Write env content (Netscape cookie format) to a temp file.
+    tmp = tempfile.NamedTemporaryFile(delete=False, prefix="yt_cookies_", suffix=".txt")
+    tmp.write(os.getenv("YTDLP_COOKIES").encode("utf-8"))
+    tmp.flush()
+    tmp.close()
+    COOKIES_PATH = tmp.name
 
 # Helpers
 
@@ -64,6 +74,7 @@ def _get_meta(video_id: str) -> dict:
             "--skip-download",
             f"https://www.youtube.com/watch?v={video_id}",
         ],
+        + (["--cookies", COOKIES_PATH] if COOKIES_PATH else []),
         capture_output=True,
         text=True,
         timeout=30,
@@ -92,6 +103,7 @@ def _resolve_stream(video_id: str) -> tuple[str, dict]:
             "youtube:player_client=android",
             f"https://www.youtube.com/watch?v={video_id}",
         ],
+        + (["--cookies", COOKIES_PATH] if COOKIES_PATH else []),
         capture_output=True,
         text=True,
         timeout=30,
