@@ -322,20 +322,28 @@
         const data = await res.json();
         if (!res.ok) { showError(data.detail || '스트림 추출 실패'); playerLoading.classList.remove('show'); return; }
 
-        // Set video source to our backend proxy (zero direct youtube.com contact)
-        mainVideo.innerHTML = '';
-        const source = document.createElement('source');
-        source.src = `${API_BASE}/api/stream/${videoId}`;
-        source.type = 'video/mp4';
-        mainVideo.appendChild(source);
         nowPlayingTitle.textContent = data.title;
 
+        // Reset completely first
+        mainVideo.pause();
+        mainVideo.removeAttribute('src');
         mainVideo.load();
+
+        // Wait until browser confirms it can play before showing
+        await new Promise((resolve, reject) => {
+          mainVideo.src = `${API_BASE}/api/stream/${videoId}`;
+          mainVideo.addEventListener('canplay', resolve, { once: true });
+          mainVideo.addEventListener('error', () => {
+            const code = mainVideo.error ? mainVideo.error.code : '?';
+            reject(new Error('Video error code: ' + code));
+          }, { once: true });
+          mainVideo.load();
+        });
+
         playerLoading.classList.remove('show');
         mainVideo.classList.add('visible');
         controls.classList.add('visible');
         mainVideo.play().catch(() => {});
-
         playerBox.scrollIntoView({ behavior:'smooth', block:'center' });
       } catch (e) {
         showError('스트림 로드 실패: ' + e.message);
