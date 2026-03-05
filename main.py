@@ -62,19 +62,21 @@ def extract_video_id(url: str) -> Optional[str]:
 
 def _get_meta(video_id: str) -> dict:
     """Get title + thumbnail via yt-dlp without downloading the file."""
+    cmd = [
+        "yt-dlp",
+        "--no-playlist",
+        "--dump-json",
+        "--no-warnings",
+        "--geo-bypass",
+        "--extractor-args",
+        "youtube:player_client=android",
+        "--skip-download",
+        f"https://www.youtube.com/watch?v={video_id}",
+    ]
+    if COOKIES_PATH:
+        cmd += ["--cookies", COOKIES_PATH]
     result = subprocess.run(
-        [
-            "yt-dlp",
-            "--no-playlist",
-            "--dump-json",
-            "--no-warnings",
-            "--geo-bypass",
-            "--extractor-args",
-            "youtube:player_client=android",
-            "--skip-download",
-            f"https://www.youtube.com/watch?v={video_id}",
-        ],
-        + (["--cookies", COOKIES_PATH] if COOKIES_PATH else []),
+        cmd,
         capture_output=True,
         text=True,
         timeout=30,
@@ -90,20 +92,22 @@ def _get_meta(video_id: str) -> dict:
 
 def _resolve_stream(video_id: str) -> tuple[str, dict]:
     """Resolve direct media URL and required headers using yt-dlp JSON output."""
+    cmd = [
+        "yt-dlp",
+        "--no-playlist",
+        "-f",
+        "best[ext=mp4][height<=720]/best[height<=720]/best",
+        "--dump-json",
+        "--no-warnings",
+        "--geo-bypass",
+        "--extractor-args",
+        "youtube:player_client=android",
+        f"https://www.youtube.com/watch?v={video_id}",
+    ]
+    if COOKIES_PATH:
+        cmd += ["--cookies", COOKIES_PATH]
     result = subprocess.run(
-        [
-            "yt-dlp",
-            "--no-playlist",
-            "-f",
-            "best[ext=mp4][height<=720]/best[height<=720]/best",
-            "--dump-json",
-            "--no-warnings",
-            "--geo-bypass",
-            "--extractor-args",
-            "youtube:player_client=android",
-            f"https://www.youtube.com/watch?v={video_id}",
-        ],
-        + (["--cookies", COOKIES_PATH] if COOKIES_PATH else []),
+        cmd,
         capture_output=True,
         text=True,
         timeout=30,
