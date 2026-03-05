@@ -79,7 +79,7 @@
     .player-wrap { width:100%; max-width:960px; animation:fadeUp .5s .2s ease both; }
     .player-box { width:100%; aspect-ratio:16/9; border:1px solid var(--border); border-radius:6px; background:var(--surf); overflow:hidden; position:relative; }
 
-    .placeholder { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; color:var(--muted); pointer-events:none; transition:opacity .3s; }
+    .placeholder { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; color:var(--muted); pointer-events:none; transition:opacity .3s; z-index:1; }
     .placeholder svg { width:56px; height:56px; opacity:.22; }
     .placeholder p { font-family:'DM Mono',monospace; font-size:11px; letter-spacing:.1em; text-transform:uppercase; }
 
@@ -96,7 +96,7 @@
     /* native video */
     .player-box video {
       position:absolute; inset:0; width:100%; height:100%;
-      background:#000; opacity:1;
+      background:#000; z-index:2;
     }
 
     /* custom controls bar */
@@ -105,7 +105,7 @@
       display:none; align-items:center; gap:10px;
       background:linear-gradient(transparent,rgba(0,0,0,.8));
       padding:18px 14px 10px;
-      opacity:0; transition:opacity .25s;
+      opacity:0; transition:opacity .25s; z-index:3;
     }
     .player-box:hover .controls { opacity:1; }
     .controls.visible { display:flex; }
@@ -330,8 +330,7 @@
         mainVideo.load();
 
         playerLoading.classList.remove('show');
-        placeholder.style.opacity = '0';
-        
+        placeholder.style.display = 'none';
         controls.classList.add('visible');
         mainVideo.play().catch(() => {});
         playerBox.scrollIntoView({ behavior:'smooth', block:'center' });
