@@ -105,6 +105,34 @@ def _get_meta(video_id: str) -> dict:
     return {"title": data.get("title", video_id), "thumbnail": data.get("thumbnail", "")}
 
 
+def _list_formats(video_id: str) -> str:
+    """Return raw format list from yt-dlp (text)."""
+    cmd = [
+        "yt-dlp",
+        "--no-playlist",
+        "--list-formats",
+        "--no-warnings",
+        "--geo-bypass",
+        "--extractor-args",
+        "youtube:player_client=android",
+        f"https://www.youtube.com/watch?v={video_id}",
+    ]
+    if COOKIES_PATH:
+        cmd += ["--cookies", COOKIES_PATH]
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        raise HTTPException(
+            status_code=502,
+            detail="yt-dlp list-formats error: " + (result.stderr[:400] or "unknown error"),
+        )
+    return result.stdout
+
+
 def _resolve_stream(video_id: str) -> tuple[str, dict]:
     """Resolve direct media URL and required headers using yt-dlp JSON output."""
     # Try common muxed/mp4 choices, then a broad bestvideo+bestaudio, then best.
@@ -280,6 +308,14 @@ async def parse_video(body: VideoRequest):
     if not video_id:
         raise HTTPException(status_code=422, detail="Please provide a valid YouTube URL or video ID.")
     return {"video_id": video_id}
+
+
+@app.get("/api/formats/{video_id}")
+async def list_formats(video_id: str):
+    """Debug endpoint: list available formats from yt-dlp."""
+    loop = asyncio.get_event_loop()
+    out = await loop.run_in_executor(_executor, _list_formats, video_id)
+    return Response(content=out, media_type="text/plain")
 
 
 @app.get("/api/health")
