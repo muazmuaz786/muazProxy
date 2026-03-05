@@ -14,6 +14,8 @@ import os
 import re
 import subprocess
 import tempfile
+import base64
+import logging
 
 app = FastAPI(title="YouTube Embedded Viewer")
 
@@ -34,14 +36,27 @@ YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 _executor = ThreadPoolExecutor(max_workers=4)
 
 # Optional: allow passing cookies via env to bypass YouTube bot checks.
-COOKIES_PATH = None
-if os.getenv("YTDLP_COOKIES"):
-    # Write env content (Netscape cookie format) to a temp file.
+# Supports plain text (YTDLP_COOKIES) or base64 (YTDLP_COOKIES_B64).
+def _load_cookies_from_env() -> Optional[str]:
+    cookie_text = os.getenv("YTDLP_COOKIES")
+    if not cookie_text:
+        b64 = os.getenv("YTDLP_COOKIES_B64")
+        if b64:
+            try:
+                cookie_text = base64.b64decode(b64).decode("utf-8")
+            except Exception as e:  # pragma: no cover
+                logging.warning("Failed to decode YTDLP_COOKIES_B64: %s", e)
+                return None
+    if not cookie_text:
+        return None
     tmp = tempfile.NamedTemporaryFile(delete=False, prefix="yt_cookies_", suffix=".txt")
-    tmp.write(os.getenv("YTDLP_COOKIES").encode("utf-8"))
+    tmp.write(cookie_text.encode("utf-8"))
     tmp.flush()
     tmp.close()
-    COOKIES_PATH = tmp.name
+    logging.info("yt-dlp cookies loaded to %s", tmp.name)
+    return tmp.name
+
+COOKIES_PATH = _load_cookies_from_env()
 
 # Helpers
 
