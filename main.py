@@ -17,7 +17,7 @@ STATIC_DIR = BASE_DIR / "static"
 STATIC_DIR.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-YOUTUBE_API_KEY    = "AIzaSyCkdN2Ru90k5DBzG5n7JjM7e6049UMtob4"
+YOUTUBE_API_KEY    = os.getenv("YOUTUBE_API_KEY", "")
 YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 _executor = ThreadPoolExecutor(max_workers=4)
 
@@ -79,7 +79,7 @@ def _get_meta(video_id: str) -> dict:
     cmd[-1:] = ["--dump-json", "--skip-download", cmd[-1]]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
-        raise HTTPException(500, "yt-dlp meta error: " + r.stderr[:300])
+        raise HTTPException(500, "yt-dlp meta error: " + (r.stderr or r.stdout)[:800])
     data = _json.loads(r.stdout.strip())
     return {"title": data.get("title", video_id), "thumbnail": data.get("thumbnail", "")}
 
@@ -196,7 +196,24 @@ async def parse_video(body: VideoRequest):
     if not vid: raise HTTPException(422, "Invalid YouTube URL or ID.")
     return {"video_id": vid}
 
+
+@app.get("/api/debug/{video_id}")
+async def debug_ytdlp(video_id: str):
+    """Temporary debug endpoint — remove after fixing."""
+    import shutil
+    cmd = _base_cmd(video_id)
+    cmd[-1:] = ["--dump-json", "--skip-download", cmd[-1]]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    return {
+        "returncode": r.returncode,
+        "stdout_snippet": r.stdout[:500],
+        "stderr_full": r.stderr,
+        "yt_dlp_path": shutil.which("yt-dlp"),
+        "cookies_path": COOKIES_PATH,
+        "cookies_exists": Path(COOKIES_PATH).exists() if COOKIES_PATH else False,
+        "cmd": cmd,
+    }
+
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "cookies": bool(COOKIES_PATH)}
-
