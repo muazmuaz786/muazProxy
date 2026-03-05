@@ -146,12 +146,10 @@ def _list_formats(video_id: str) -> str:
 
 def _resolve_stream(video_id: str) -> tuple[str, dict]:
     """Resolve direct media URL and required headers using yt-dlp JSON output."""
-    # Try common muxed/mp4 choices, then a broad bestvideo+bestaudio, then best.
+    # Try broadest first to avoid "format not available".
     format_candidates = [
-        "22/18/137+140/136+140/135+140/134+140/133+140",  # explicit itags (muxed or av+aud)
-        "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio",
-        "bestvideo[ext=webm]+bestaudio[ext=webm]",
-        "bestvideo+bestaudio/best",
+        "bv*+ba/best",  # any bestvideo + any bestaudio, fallback to best
+        "best",
     ]
     last_err = ""
     for fmt in format_candidates:
