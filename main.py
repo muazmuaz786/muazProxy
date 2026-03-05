@@ -54,7 +54,7 @@ def extract_video_id(url: str) -> Optional[str]:
 
 
 def _ytdlp_base() -> list:
-    cmd = ["yt-dlp", "--no-playlist", "--geo-bypass", "--force-ipv4"]
+    cmd = ["yt-dlp", "--no-playlist", "--geo-bypass", "--force-ipv4", "--no-check-certificates", "--extractor-args", "youtube:player_client=web,default"]
     if COOKIES:
         cmd += ["--cookies", COOKIES]
     return cmd
@@ -75,6 +75,8 @@ def _download(video_id: str) -> Path:
     cmd = _ytdlp_base() + [
         "-f", "18/best[ext=mp4][height<=480]/best[ext=mp4]/best",
         "--no-warnings",
+        "--hls-prefer-native",
+        "--no-part",
         "-o", out,
         f"https://www.youtube.com/watch?v={video_id}",
     ]
