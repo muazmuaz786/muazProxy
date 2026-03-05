@@ -307,36 +307,52 @@
 
     // ── Stream loading ────────────────────────────────────────
     async function loadStream(videoId) {
-      // Show loading state
-      placeholder.style.opacity = '0';
+      // Reset state
+      placeholder.style.display = 'flex';
       playerLoading.classList.add('show');
-      
       controls.classList.remove('visible');
-      mainVideo.src = '';
+      mainVideo.pause();
+      mainVideo.removeAttribute('src');
+      mainVideo.load();
       videoIdTag.innerHTML = `VIDEO_ID — <span>${videoId}</span>`;
+      nowPlayingTitle.textContent = '';
+      clearError();
 
       try {
-        // Ask backend for stream URLs (yt-dlp extracts them server-side)
-        const res  = await fetch(`${API_BASE}/api/stream-info/${videoId}`);
+        // Step 1: get metadata (fast ~1s)
+        const res = await fetch(`${API_BASE}/api/stream-info/${videoId}`);
         const data = await res.json();
-        if (!res.ok) { showError(data.detail || '스트림 추출 실패'); playerLoading.classList.remove('show'); return; }
-
+        if (!res.ok) throw new Error(data.detail || '메타데이터 오류');
         nowPlayingTitle.textContent = data.title;
 
-        // Set src and show immediately — file is already downloaded server-side
-        mainVideo.pause();
-        mainVideo.removeAttribute('src');
-        mainVideo.src = `${API_BASE}/api/stream/${videoId}`;
-        mainVideo.load();
+        // Step 2: trigger download+stream — this takes 10-60s on server
+        // We wait for canplay which fires once enough data is buffered
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error('시간 초과 (60초)')), 120000);
+
+          mainVideo.oncanplay = () => { clearTimeout(timeout); resolve(); };
+          mainVideo.onerror   = () => {
+            clearTimeout(timeout);
+            // Try to get more info from the server
+            fetch(`${API_BASE}/api/stream/${videoId}`)
+              .then(r => r.json()).then(d => reject(new Error(d.detail || '스트림 오류')))
+              .catch(() => reject(new Error('스트림 로드 실패 (코드: ' + (mainVideo.error?.code ?? '?') + ')')));
+          };
+
+          mainVideo.src = `${API_BASE}/api/stream/${videoId}`;
+          mainVideo.load();
+        });
 
         playerLoading.classList.remove('show');
         placeholder.style.display = 'none';
         controls.classList.add('visible');
         mainVideo.play().catch(() => {});
         playerBox.scrollIntoView({ behavior:'smooth', block:'center' });
+
       } catch (e) {
-        showError('스트림 로드 실패: ' + e.message);
+        showError('⚠ ' + e.message);
         playerLoading.classList.remove('show');
+        placeholder.style.display = 'flex';
       }
     }
 
