@@ -35,9 +35,18 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "AIzaSyCkdN2Ru90k5DBzG5n7JjM7e604
 YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 _executor = ThreadPoolExecutor(max_workers=4)
 
-# Optional: allow passing cookies via env to bypass YouTube bot checks.
-# Supports plain text (YTDLP_COOKIES) or base64 (YTDLP_COOKIES_B64).
+# Optional: allow passing cookies via env/secret file to bypass YouTube bot checks.
+# Supports:
+#   YTDLP_COOKIES_PATH   -> absolute path to a cookies.txt (e.g., Render secret file)
+#   YTDLP_COOKIES_B64    -> base64-encoded cookies.txt
+#   YTDLP_COOKIES        -> raw cookies.txt content
 def _load_cookies_from_env() -> Optional[str]:
+    # Prefer an explicit path (e.g., Render Secret File mounted path)
+    path = os.getenv("YTDLP_COOKIES_PATH")
+    if path and Path(path).exists():
+        logging.info("yt-dlp using cookies file path %s", path)
+        return path
+
     cookie_text = os.getenv("YTDLP_COOKIES")
     if not cookie_text:
         b64 = os.getenv("YTDLP_COOKIES_B64")
@@ -80,6 +89,7 @@ def _get_meta(video_id: str) -> dict:
     cmd = [
         "yt-dlp",
         "--no-playlist",
+        "--force-ipv4",
         "--dump-json",
         "--no-warnings",
         "--geo-bypass",
@@ -110,6 +120,7 @@ def _list_formats(video_id: str) -> str:
     cmd = [
         "yt-dlp",
         "--no-playlist",
+        "--force-ipv4",
         "--list-formats",
         "--no-warnings",
         "--geo-bypass",
@@ -137,8 +148,9 @@ def _resolve_stream(video_id: str) -> tuple[str, dict]:
     """Resolve direct media URL and required headers using yt-dlp JSON output."""
     # Try common muxed/mp4 choices, then a broad bestvideo+bestaudio, then best.
     format_candidates = [
-        "22/18/137+140/136+140/135+140",                  # explicit itags (muxed or av+aud)
+        "22/18/137+140/136+140/135+140/134+140/133+140",  # explicit itags (muxed or av+aud)
         "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio",
+        "bestvideo[ext=webm]+bestaudio[ext=webm]",
         "bestvideo+bestaudio/best",
     ]
     last_err = ""
@@ -146,6 +158,7 @@ def _resolve_stream(video_id: str) -> tuple[str, dict]:
         cmd = [
             "yt-dlp",
             "--no-playlist",
+            "--force-ipv4",
             "-f",
             fmt,
             "--dump-json",
@@ -321,3 +334,4 @@ async def list_formats(video_id: str):
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
