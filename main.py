@@ -92,38 +92,45 @@ def _get_meta(video_id: str) -> dict:
 
 def _resolve_stream(video_id: str) -> tuple[str, dict]:
     """Resolve direct media URL and required headers using yt-dlp JSON output."""
-    cmd = [
-        "yt-dlp",
-        "--no-playlist",
-        "-f",
+    # Try a preferred mp4 <=720p, then fall back to "best" if unavailable.
+    format_candidates = [
         "best[ext=mp4][height<=720]/best[height<=720]/best",
-        "--dump-json",
-        "--no-warnings",
-        "--geo-bypass",
-        "--extractor-args",
-        "youtube:player_client=android",
-        f"https://www.youtube.com/watch?v={video_id}",
+        "best",
     ]
-    if COOKIES_PATH:
-        cmd += ["--cookies", COOKIES_PATH]
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if result.returncode != 0 or not result.stdout.strip():
-        raise HTTPException(
-            status_code=502,
-            detail="yt-dlp failed to fetch stream URL: "
-            + (result.stderr.strip()[:400] or "unknown error"),
+    last_err = ""
+    for fmt in format_candidates:
+        cmd = [
+            "yt-dlp",
+            "--no-playlist",
+            "-f",
+            fmt,
+            "--dump-json",
+            "--no-warnings",
+            "--geo-bypass",
+            "--extractor-args",
+            "youtube:player_client=android",
+            f"https://www.youtube.com/watch?v={video_id}",
+        ]
+        if COOKIES_PATH:
+            cmd += ["--cookies", COOKIES_PATH]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
-    data = _json.loads(result.stdout.strip())
-    url = data.get("url")
-    headers = data.get("http_headers", {})
-    if not url:
-        raise HTTPException(status_code=502, detail="yt-dlp returned no stream URL.")
-    return url, headers
+        if result.returncode == 0 and result.stdout.strip():
+            data = _json.loads(result.stdout.strip())
+            url = data.get("url")
+            headers = data.get("http_headers", {})
+            if url:
+                return url, headers
+        last_err = (result.stderr or "")[:400]
+
+    raise HTTPException(
+        status_code=502,
+        detail="yt-dlp failed to fetch stream URL: " + (last_err or "unknown error"),
+    )
 
 
 # Schemas
