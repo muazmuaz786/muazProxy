@@ -168,8 +168,16 @@ async def stream_info(video_id: str):
 async def stream_video(video_id: str):
     loop = asyncio.get_event_loop()
     gen  = await loop.run_in_executor(_executor, _stream_video, video_id)
-    return StreamingResponse(gen, media_type="video/mp4",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return StreamingResponse(
+        gen,
+        media_type="video/mp4",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Content-Type": "video/mp4",
+            "Accept-Ranges": "bytes",
+        }
+    )
 
 @app.get("/api/search", response_model=SearchResponse)
 async def search_videos(
