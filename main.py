@@ -276,3 +276,4 @@ async def list_formats(video_id: str):
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "cookies": bool(COOKIES_PATH)}
+
