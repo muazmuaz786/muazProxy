@@ -75,8 +75,12 @@ def _download(video_id: str) -> Path:
     cmd = _ytdlp_base() + [
         "-f", "18/best[ext=mp4][height<=480]/best[ext=mp4]/best",
         "--no-warnings",
-        "--hls-prefer-native",
         "--no-part",
+        "--verbose",
+        "--add-header", "User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "--add-header", "Accept-Language:en-US,en;q=0.9",
+        "--add-header", "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "--sleep-interval", "1",
         "-o", out,
         f"https://www.youtube.com/watch?v={video_id}",
     ]
@@ -86,12 +90,7 @@ def _download(video_id: str) -> Path:
     
     p = Path(out)
     if not p.exists() or p.stat().st_size < 1000:
-        # try without format restriction
-        cmd2 = _ytdlp_base() + ["--no-warnings", "-o", out,
-                                  f"https://www.youtube.com/watch?v={video_id}"]
-        r2 = subprocess.run(cmd2, capture_output=True, text=True, timeout=180)
-        if not p.exists() or p.stat().st_size < 1000:
-            raise HTTPException(500, f"Download failed: {r.stderr[:300] or r2.stderr[:300]}")
+        raise HTTPException(500, f"Download failed: {r.stderr or r.stdout}")
     
     log.info("Downloaded %s → %s bytes", video_id, p.stat().st_size)
     return p
