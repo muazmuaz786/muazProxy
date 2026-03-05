@@ -39,7 +39,23 @@ def _load_cookies() -> Optional[str]:
     tmp.write(cookie_text.encode()); tmp.flush(); tmp.close()
     return tmp.name
 
-COOKIES_PATH = _load_cookies()
+
+# Copy cookies to writable temp location so yt-dlp can update them
+def _ensure_writable_cookies(path: Optional[str]) -> Optional[str]:
+    if not path:
+        return None
+    try:
+        tmp = tempfile.NamedTemporaryFile(delete=False, prefix='yt_cookies_rw_', suffix='.txt')
+        tmp.write(Path(path).read_bytes())
+        tmp.flush(); tmp.close()
+        logging.info('Copied cookies to writable path: %s', tmp.name)
+        return tmp.name
+    except Exception as e:
+        logging.warning('Could not copy cookies: %s', e)
+        return path
+
+COOKIES_PATH = _ensure_writable_cookies(_load_cookies())
+
 
 
 # ── Helpers ────────────────────────────────────────────────────
@@ -217,4 +233,3 @@ async def debug_ytdlp(video_id: str):
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "cookies": bool(COOKIES_PATH)}
-
