@@ -17,7 +17,7 @@ STATIC_DIR = BASE_DIR / "static"
 STATIC_DIR.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-YOUTUBE_API_KEY    = "AIzaSyCkdN2Ru90k5DBzG5n7JjM7e6049UMtob4"
+YOUTUBE_API_KEY    = os.getenv("YOUTUBE_API_KEY", "")
 YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 _executor = ThreadPoolExecutor(max_workers=4)
 
@@ -229,6 +229,14 @@ async def debug_ytdlp(video_id: str):
         "cookies_exists": Path(COOKIES_PATH).exists() if COOKIES_PATH else False,
         "cmd": cmd,
     }
+
+
+@app.get("/api/formats/{video_id}")
+async def list_formats(video_id: str):
+    cmd = _base_cmd(video_id)
+    cmd[-1:] = ["--list-formats", cmd[-1]]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    return Response(content=r.stdout + r.stderr, media_type="text/plain")
 
 @app.get("/api/health")
 async def health():
